@@ -1,11 +1,12 @@
 import sys
+import time
 from awsglue.transforms import *
 from awsglue.utils import getResolvedOptions
 from pyspark.context import SparkContext
 from awsglue.context import GlueContext
 from awsglue.job import Job
 from awsglue.dynamicframe import DynamicFrameCollection, DynamicFrame
-from pyspark.sql.functions import col, when, to_date, lower, trim
+from pyspark.sql.functions import col, when, to_date, lower, trim, substring
 from pyspark.sql.types import (
     BooleanType, LongType, StringType, IntegerType, DecimalType, DateType, StructType, StructField
 )
@@ -36,26 +37,55 @@ def MyTransform(glueContext, dfc, target_layer='curated') -> DynamicFrameCollect
                     .cast(BooleanType())
                 )
 
-    string_fields = ["category", "amenities", "price_type", "cityname", "state"]
+    string_fields = ["category", "amenities", "price_type", "cityname", "state",
+                     "title", "source", "currency", "price_display", "address", "call_to_action", "booking_status"]
+    varchar_limits = {
+        "category": 255, "amenities": 65535, "price_type": 255, "cityname": 255,
+        "state": 255, "title": 512, "source": 255, "currency": 10,
+        "price_display": 255, "address": 512, "call_to_action": 255, "booking_status": 255
+    }
     for field in string_fields:
         if field in columns:
-            df = df.withColumn(field, lower(trim(col(field))))
+            max_len = varchar_limits.get(field, 255)
+            df = df.withColumn(field, lower(trim(substring(col(field), 1, max_len))))
 
     dyf_transformed = DynamicFrame.fromDF(df, glueContext, "dyf_transformed")
     return DynamicFrameCollection({"CustomTransform": dyf_transformed}, glueContext)
 
 def enforce_schema_and_clean(df, schema, primary_keys):
-    # Cast columns to correct types
     for field in schema.fields:
         if field.name in df.columns:
             df = df.withColumn(field.name, col(field.name).cast(field.dataType))
         else:
             df = df.withColumn(field.name, col(field.name))
-
-    # Drop rows with nulls in primary key columns
     if primary_keys:
         df = df.na.drop(subset=primary_keys)
     return df
+
+def write_table_with_retry(glueContext, dyf, table_name, create_table_sql, max_retries=3):
+    attempt = 0
+    while attempt < max_retries:
+        try:
+            glueContext.write_dynamic_frame.from_options(
+                frame=dyf,
+                connection_type="redshift",
+                connection_options={
+                    "redshiftTmpDir": "s3://aws-glue-assets-371439860588-eu-west-1/temporary/",
+                    "useConnectionProperties": "true",
+                    "dbtable": f"curated.{table_name}",
+                    "connectionName": "Redshift_conn",
+                    "preactions": create_table_sql
+                },
+                transformation_ctx=f"{table_name}_curated_write"
+            )
+            logger.info(f"Successfully wrote table curated.{table_name} on attempt {attempt + 1}")
+            break
+        except Exception as e:
+            logger.error(f"Attempt {attempt + 1} failed to write table curated.{table_name}: {str(e)}")
+            attempt += 1
+            if attempt == max_retries:
+                raise
+            time.sleep(10)
 
 args = getResolvedOptions(sys.argv, ['JOB_NAME'])
 sc = SparkContext()
@@ -64,7 +94,6 @@ spark = glueContext.spark_session
 job = Job(glueContext)
 job.init(args['JOB_NAME'], args)
 
-# Define schemas and primary keys
 schemas = {
     "apartments": {
         "schema": StructType([
@@ -127,7 +156,6 @@ schemas = {
     }
 }
 
-# Load raw data
 def load_raw_table(table_name):
     return glueContext.create_dynamic_frame.from_options(
         connection_type="redshift",
@@ -143,17 +171,14 @@ def load_raw_table(table_name):
 tables = ["apartments", "apartment_attributes", "bookings", "user_viewing"]
 raw_dfs = {t: load_raw_table(t) for t in tables}
 
-# Transform all tables
 curated_dfc = {}
 for t in tables:
     curated_dfc[t] = MyTransform(glueContext, DynamicFrameCollection({f"{t}_raw": raw_dfs[t]}, glueContext), target_layer='curated')
 
-# Select from collections
 curated_sel = {}
 for t in tables:
     curated_sel[t] = SelectFromCollection.apply(dfc=curated_dfc[t], key=list(curated_dfc[t].keys())[0])
 
-# Enforce schema, clean, and prepare DynamicFrames for write
 prepared_dyf = {}
 for t in tables:
     df = curated_sel[t].toDF()
@@ -163,27 +188,6 @@ for t in tables:
     df.show(5)
     prepared_dyf[t] = DynamicFrame.fromDF(df, glueContext, f"dyf_{t}")
 
-# Write each curated table with error handling
-def write_table(dyf, table_name, create_table_sql):
-    try:
-        glueContext.write_dynamic_frame.from_options(
-            frame=dyf,
-            connection_type="redshift",
-            connection_options={
-                "redshiftTmpDir": "s3://aws-glue-assets-371439860588-eu-west-1/temporary/",
-                "useConnectionProperties": "true",
-                "dbtable": f"curated.{table_name}",
-                "connectionName": "Redshift_conn",
-                "preactions": create_table_sql
-            },
-            transformation_ctx=f"{table_name}_curated_write"
-        )
-        logger.info(f"Successfully wrote table curated.{table_name}")
-    except Exception as e:
-        logger.error(f"Error writing table curated.{table_name}: {str(e)}")
-        raise
-
-# Preactions SQL statements
 preactions_sql = {
     "apartments": """
         CREATE TABLE IF NOT EXISTS curated.apartments (
@@ -243,8 +247,7 @@ preactions_sql = {
     """
 }
 
-# Write all tables
 for t in tables:
-    write_table(prepared_dyf[t], t, preactions_sql[t])
+    write_table_with_retry(glueContext, prepared_dyf[t], t, preactions_sql[t])
 
 job.commit()
