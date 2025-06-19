@@ -307,96 +307,9 @@ This state machine will define and execute the sequence of your Glue jobs.
 
 1.  Navigate to **AWS Step Functions** service.
 2.  Go to **"State machines"** and click **"Create state machine"**.
-3.  **Choose authoring method:** Select `Write your workflow in code` (unless you prefer to use Workflow Studio).
-4.  **Type:** `Standard`.
-5.  **Definition:** Paste the Amazon States Language (ASL) definition from `orchestration/pipeline_workflow.asl.json` in your repository. **IMPORTANT:** Update the `Resource` ARNs for each `Task` state (Job1, Job2, Job3, Job4) to point to the actual ARNs of the Glue jobs you created in Section 4.2.
-    * Example ASL snippet:
-        ```json
-        {
-          "Comment": "Rental Data Pipeline Orchestration",
-          "StartAt": "RunJob1_ExtractAuroraToS3",
-          "States": {
-            "RunJob1_ExtractAuroraToS3": {
-              "Type": "Task",
-              "Resource": "arn:aws:states:::glue:startJobRun.sync",
-              "Parameters": {
-                "JobName": "pipeline-job-aurora-to-s3-raw",
-                "Arguments": {}
-              },
-              "End": true,
-              "Next": "RunJob2_S3ToRedshiftRaw"
-            },
-            "RunJob2_S3ToRedshiftRaw": {
-              "Type": "Task",
-              "Resource": "arn:aws:states:::glue:startJobRun.sync",
-              "Parameters": {
-                "JobName": "pipeline-job-s3-to-redshift-raw",
-                "Arguments": {}
-              },
-              "End": true,
-              "Next": "RunJob3_RedshiftRawToCurated"
-            },
-            "RunJob3_RedshiftRawToCurated": {
-              "Type": "Task",
-              "Resource": "arn:aws:states:::glue:startJobRun.sync",
-              "Parameters": {
-                "JobName": "pipeline-job-redshift-raw-to-curated",
-                "Arguments": {}
-              },
-              "End": true,
-              "Next": "RunJob4_RedshiftCuratedToPresentation"
-            },
-            "RunJob4_RedshiftCuratedToPresentation": {
-              "Type": "Task",
-              "Resource": "arn:aws:states:::glue:startJobRun.sync",
-              "Parameters": {
-                "JobName": "pipeline-job-redshift-curated-to-presentation",
-                "Arguments": {}
-              },
-              "End": true
-            }
-          }
-        }
-        ```
-        *(Note: The `End: true` on intermediate steps means it will stop there if no `Next` is defined. For a sequence, only the final step has `End: true`. I've corrected the example to chain them. Make sure your ASL chains them correctly using `Next` properties.)*
-        *The correct chaining for sequential jobs looks like this (simplified):*
-        ```json
-        {
-          "Comment": "Rental Data Pipeline Orchestration",
-          "StartAt": "RunJob1_ExtractAuroraToS3",
-          "States": {
-            "RunJob1_ExtractAuroraToS3": {
-              "Type": "Task",
-              "Resource": "arn:aws:states:::glue:startJobRun.sync",
-              "Parameters": { "JobName": "pipeline-job-aurora-to-s3-raw" },
-              "Next": "RunJob2_S3ToRedshiftRaw"
-            },
-            "RunJob2_S3ToRedshiftRaw": {
-              "Type": "Task",
-              "Resource": "arn:aws:states:::glue:startJobRun.sync",
-              "Parameters": { "JobName": "pipeline-job-s3-to-redshift-raw" },
-              "Next": "RunJob3_RedshiftRawToCurated"
-            },
-            "RunJob3_RedshiftRawToCurated": {
-              "Type": "Task",
-              "Resource": "arn:aws:states:::glue:startJobRun.sync",
-              "Parameters": { "JobName": "pipeline-job-redshift-raw-to-curated" },
-              "Next": "RunJob4_RedshiftCuratedToPresentation"
-            },
-            "RunJob4_RedshiftCuratedToPresentation": {
-              "Type": "Task",
-              "Resource": "arn:aws:states:::glue:startJobRun.sync",
-              "Parameters": { "JobName": "pipeline-job-redshift-curated-to-presentation" },
-              "End": true
-            }
-          }
-        }
-        ```
-6.  Click **"Next"**.
-7.  **Specify state machine settings:**
-    * **State machine name:** `rental-data-pipeline-orchestrator`
-    * **Permissions:** Choose an `Existing role` and select your `AWSGlueAuroraS3Role` (ensure this role has `states:StartExecution` permissions for Glue jobs and `iam:PassRole` permissions for the Glue role).
-8.  Click **"Create state machine"**.
+3.  **Choose authoring method:** Select use Workflow Studio.
+    * **Permissions:** permissions for the Glue role - already set-up.
+4.  Click **"Create state machine"**.
 
 ### 4.4. Running the Pipeline
 
