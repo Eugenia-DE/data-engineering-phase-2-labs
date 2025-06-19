@@ -81,7 +81,7 @@ def transform_and_compute_kpis(**kwargs):
         avg_track_duration_ms=('duration_ms', 'mean')
     ).reset_index()
     
-    genre_kpis['popularity_index'] = genre_kpis['total_streams'] # Simple popularity for now
+    genre_kpis['popularity_index'] = genre_kpis['total_streams'] 
     logger.info(f"Genre KPIs rows for this batch: {len(genre_kpis)}")
 
     # --- KPI 2: Hourly KPIs ---
